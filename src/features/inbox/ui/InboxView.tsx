@@ -35,10 +35,7 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import {
-  InboxFiltersMenu,
-  INBOX_FILTER_MENU_WIDTH,
-} from "./InboxFiltersMenu";
+import { InboxFiltersMenu, INBOX_FILTER_MENU_WIDTH } from "./InboxFiltersMenu";
 import { InboxConnectMenu } from "./InboxConnectMenu";
 import { InboxProviderMark } from "./InboxProviderMark";
 import { ProjectLogoIcon } from "../../projects/ui/ProjectLogoIcon";
@@ -108,11 +105,18 @@ import { copyText } from "../../../platform/tauri/clipboard";
 import { projectKey, projectName } from "../../../shared/lib/paths";
 import { IS_MAC } from "../../../platform/tauri/platform";
 import { playCue } from "../../settings/model/sounds";
-import { sameProjectPath, type RecentProject } from "../../projects/model/recents";
-import { sessionDisplayTitle, type LinkedWorkItem } from "../../sessions/model/session";
+import {
+  sameProjectPath,
+  type RecentProject,
+} from "../../projects/model/recents";
+import {
+  sessionDisplayTitle,
+  type LinkedWorkItem,
+} from "../../sessions/model/session";
 import type { SessionSummary } from "../../sessions/data/sessionStore";
 import {
   inboxItemMatchesLinkedWorkItem,
+  linearWorkspaceFromUrl,
   linkedWorkItemInboxKey,
   linkedWorkItemProvider,
   relatedSessionsForInboxItem,
@@ -192,10 +196,7 @@ import {
   type InboxReplyTarget,
 } from "./InboxComments";
 import { InboxPrDiff } from "./InboxPrDiff";
-import {
-  InboxPrChecks,
-  PrChecksTab,
-} from "./InboxPrChecks";
+import { InboxPrChecks, PrChecksTab } from "./InboxPrChecks";
 import {
   InboxDiscussionPanel,
   type InboxSessionPortal,
@@ -767,11 +768,13 @@ export function InboxView({
 
   const inboxSeenTick = useInboxSeenTick();
   useEffect(() => {
-    rememberInboxItems(items.map((item) => ({
-      key: inboxItemKey(item),
-      updatedAt: item.updatedAt,
-      projectPath: item.projectPath,
-    })));
+    rememberInboxItems(
+      items.map((item) => ({
+        key: inboxItemKey(item),
+        updatedAt: item.updatedAt,
+        projectPath: item.projectPath,
+      })),
+    );
   }, [items]);
   const sourceEntries = useMemo(
     () =>
@@ -961,11 +964,13 @@ export function InboxView({
             title="Mark all as read"
             aria-label="Mark all as read"
             disabled={!sourceHasUnseen}
-            onClick={() => setReadStatusError(
-              markInboxItemsSeen(sourceEntries)
-                ? null
-                : "Could not save read status. Please try again.",
-            )}
+            onClick={() =>
+              setReadStatusError(
+                markInboxItemsSeen(sourceEntries)
+                  ? null
+                  : "Could not save read status. Please try again.",
+              )
+            }
             className="grid size-6 shrink-0 place-items-center rounded-md text-content/45 hover:bg-content/10 hover:text-content disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-content/45"
           >
             <CheckCheck className="size-3.5" strokeWidth={1.75} />
@@ -1186,9 +1191,10 @@ function peekLinkedWorkItem(
 ): InboxItem | null {
   if (target.kind === "linear") {
     const cached = peekLinearWorkItem(target.id ?? target.identifier);
-    return cached
-      ? { ...cached, projectPath: cached.projectPath || cwd }
-      : null;
+    const expected = linearWorkspaceFromUrl(target.url);
+    const actual = cached ? linearWorkspaceFromUrl(cached.url) : null;
+    if (!cached || (expected && actual && expected !== actual)) return null;
+    return { ...cached, projectPath: cached.projectPath || cwd };
   }
   const cached = peekGithubWorkItem(target.repo, target.kind, target.number);
   return cached ? { ...cached, projectPath: cwd, provider: "github" } : null;
@@ -1200,6 +1206,13 @@ async function fetchLinkedWorkItem(
 ): Promise<InboxItem> {
   if (target.kind === "linear") {
     const item = await linearWorkItem(target.id ?? target.identifier);
+    const expected = linearWorkspaceFromUrl(target.url);
+    const actual = linearWorkspaceFromUrl(item.url);
+    if (expected && actual && expected !== actual) {
+      throw new Error(
+        `${target.identifier} belongs to a different Linear workspace than the one connected here.`,
+      );
+    }
     return { ...item, projectPath: item.projectPath || cwd };
   }
   const item = await githubWorkItem(
@@ -1359,7 +1372,7 @@ export function LinkedWorkItemPanel({
               className={ACTION_OUTLINE}
             >
               <ExternalLink className="size-3.5" strokeWidth={1.75} />
-              Open on GitHub
+              {target.kind === "linear" ? "Open in Linear" : "Open on GitHub"}
             </button>
           </div>
         ) : (
@@ -2182,21 +2195,21 @@ export function InboxDetail({
           ? jiraIssueDetails(jiraKey)
           : Promise.reject(new Error("Missing Jira issue"))
         : gitlabKind
-        ? gitlabWorkItemDetails(item.repo, gitlabKind, item.number)
-        : azureDevOpsKind
-          ? azureDevOpsWorkItemDetails(
-              item.repo,
-              azureDevOpsKind,
-              item.number,
-            )
-          : githubKind
-            ? githubWorkItemDetails(
-                item.projectPath,
+          ? gitlabWorkItemDetails(item.repo, gitlabKind, item.number)
+          : azureDevOpsKind
+            ? azureDevOpsWorkItemDetails(
                 item.repo,
-                githubKind,
+                azureDevOpsKind,
                 item.number,
               )
-            : Promise.reject(new Error("Unknown inbox item"));
+            : githubKind
+              ? githubWorkItemDetails(
+                  item.projectPath,
+                  item.repo,
+                  githubKind,
+                  item.number,
+                )
+              : Promise.reject(new Error("Unknown inbox item"));
     void pending
       .then((next) => {
         if (cancelled) return;
@@ -2762,10 +2775,7 @@ export function InboxDetail({
                           ? { ...item, projectPath: startProject }
                           : item;
                         void Promise.resolve(
-                          onStart(
-                            next,
-                            tracker ? details?.body : undefined,
-                          ),
+                          onStart(next, tracker ? details?.body : undefined),
                         )
                           .catch((err: unknown) => {
                             setStartError(
